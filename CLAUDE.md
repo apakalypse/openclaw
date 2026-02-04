@@ -331,6 +331,261 @@ OPENCLAW_CLAUDE_CLI_LOG_OUTPUT=1 node openclaw.mjs gateway run --verbose
 
 Check logs at: `\tmp\openclaw\openclaw-<date>.log`
 
+## DJ Profile Pack
+
+The DJ profile pack is a personal assistant configuration with Telegram integration, Notion task management, and Google Calendar support. Documentation lives in `docs/dj/`.
+
+### Budget System (`src/budget/`)
+
+Resource governance for agent workflows with tiered limits:
+
+| Profile | Tool Calls | Tokens | Runtime | Cost | Use Case |
+|---------|------------|--------|---------|------|----------|
+| **cheap** | 10 | 50K | 1 min | $0.10 | Quick questions |
+| **normal** | 50 | 200K | 5 min | $1.00 | Task management |
+| **deep** | 200 | 1M | 30 min | $10.00 | Deep research |
+
+**Key files:**
+- `src/budget/governor.ts` - BudgetGovernor class with limit enforcement
+- `src/budget/profiles.ts` - Profile definitions (CHEAP_LIMITS, NORMAL_LIMITS, DEEP_LIMITS)
+- `src/budget/types.ts` - Type definitions and event types
+- `src/budget/config.ts` - Configuration resolution
+- `docs/dj/budget.md` - Full documentation
+
+**Features:**
+- Per-workflow caps (tool calls, LLM calls, tokens, cost, runtime)
+- Error loop detection (3 repeated errors triggers stop)
+- Deep mode with auto-revert (timeout or one-run)
+- Event subscription for monitoring (usage_update, limit_warning, limit_exceeded)
+- Telegram commands: `/budget`, `/usage`
+
+**Usage:**
+```typescript
+import { createBudgetGovernor, createDeepGovernor } from "openclaw/budget";
+
+const governor = createBudgetGovernor({ profileId: "normal" });
+const result = governor.recordToolCall("web_search");
+if (!result.allowed) {
+  console.log(`Limit exceeded: ${result.exceededLimit}`);
+}
+```
+
+### Work Busy Calendar Integration (`src/utils/busy-block.ts`)
+
+Sync Outlook work calendar to Google Calendar for DJ visibility without exposing meeting details.
+
+**Key files:**
+- `src/utils/busy-block.ts` - Privacy stripping and merge utilities
+- `src/utils/busy-block.test.ts` - 52 unit tests (includes DST, multi-day, overlap trust tests)
+- `docs/dj/work-busy-ics.md` - Setup guide
+- `skills/dj-calendars/SKILL.md` - `/calendars` helper command
+
+**Privacy stripping removes:**
+- Meeting titles → replaced with "Busy (work)"
+- Description, location, attendees, organizer
+- Conference links (Meet/Hangout), htmlLink
+
+**Key functions:**
+```typescript
+import {
+  sanitizeWorkBusyEvent,    // Strip identifying info from work events
+  prepareWorkBusyEvents,    // Filter, sanitize, expand all-day events
+  mergeCalendarEvents,      // Merge primary + work busy calendars
+  findTimeGaps,             // Find available slots excluding busy blocks
+  expandAllDayToWorkingHours, // Convert all-day to working hours range
+  filterRecurrenceMasters,  // Remove recurring event masters
+} from "./utils/busy-block.js";
+```
+
+**Configuration:**
+```json
+{
+  "dj": {
+    "calendarId": "primary",
+    "workBusyCalendarId": "abc123@group.calendar.google.com",
+    "workBusyLabel": "Busy (work)",
+    "workBusyEmoji": "🔒"
+  }
+}
+```
+
+**Skills updated for Work Busy support:**
+- `/agenda` - Shows work busy blocks with 🔒 emoji
+- `/findslot` - Excludes work busy blocks from available slots
+- `/timeblock` - Avoids work busy blocks when proposing time blocks
+
+### DJ Skills (`skills/dj-*`)
+
+| Skill | Command | Description |
+|-------|---------|-------------|
+| dj-agenda | `/agenda` | Calendar + Notion tasks view |
+| dj-findslot | `/findslot` | Find available calendar slots |
+| dj-timeblock | `/timeblock` | Propose calendar blocks for tasks |
+| dj-capture | `/capture` | Quick task capture to Notion |
+| dj-mode | `/mode` | Switch between personal/worksafe modes |
+| dj-budget | `/budget` | View/change budget profile |
+| dj-calendars | `/calendars` | List available Google Calendars |
+| dj-research | `/research` | Web research with budget-controlled depth (M4) |
+| dj-web | `/web` | Browser automation with policy controls (M4) |
+| dj-site | `/site` | Squarespace draft-first publishing (M4) |
+
+### Web Operator (M4) (`src/dj/`)
+
+Operator-grade "internet on my behalf" layer with policy-enforced safety controls.
+
+**Key files:**
+- `src/dj/web-policy.ts` - Allowlists, deny rules, action classification (101 tests)
+- `src/dj/web-operator.ts` - Plan/do/approve workflow orchestration
+- `src/dj/web-autosubmit-state.ts` - Daily/workflow cap persistence
+- `src/dj/web-logging.ts` - Structured logging + Notion audit trail
+- `docs/dj/web-operator.md` - Full documentation
+
+**Action Classification:**
+
+| Class | Approval | Description |
+|-------|----------|-------------|
+| READ_ONLY | Never | Navigation, viewing |
+| DRAFT | Never | Save drafts (not publish) |
+| SUBMIT_LOW_RISK | If allowlisted | Contact forms, newsletters |
+| PUBLISH | Always | Making content public |
+| PAYMENT | Always | Financial transactions |
+| SECURITY | Always | Auth settings changes |
+| DESTRUCTIVE | Always | Delete, cancel actions |
+| AUTH | Always | Login, registration |
+| UPLOAD | Always | File uploads |
+
+**Default Allowlist (Allowlist C):**
+- `stataipodcast.com` - /contact, /newsletter, /subscribe, /join
+- `forms.gle` - Navigation only (redirect)
+- `docs.google.com` - /forms/d/e/.../viewform, /forms/d/e/.../formResponse
+
+**Deny Rules (trigger approval even if allowlisted):**
+- Password/auth fields, payment fields, file upload, CAPTCHA
+- Sensitive keywords (medical, SSN, etc.), >2 free-text fields
+
+**Auto-Submit Caps:**
+- Per workflow: 1 (default)
+- Per day: 3 (default)
+- Persists across restarts
+
+**Profile Requirements:**
+- cheap: Browser disabled (switch to normal/deep)
+- normal: Browser allowed, bounded
+- deep: Extended limits, self-expiring
+
+**Cron Safety:** Tasks NEVER inherit deep mode.
+
+### Notion Integration (M4.5) (`src/dj/notion/`)
+
+Notion as canonical database for DJ workflows with raw HTTP client (no SDK).
+
+**Key files:**
+- `src/dj/notion/notion-client.ts` - HTTP client with retries and rate limiting (22 tests)
+- `src/dj/notion/notion-service.ts` - Higher-level helpers for DJ operations (27 tests)
+- `src/dj/notion/types.ts` - Type definitions and error classes
+- `src/dj/research-service.ts` - Research caching and Notion save (29 tests)
+- `src/dj/site-service.ts` - Squarespace sync with idempotent ContentHash (20 tests)
+
+**Features:**
+- Raw fetch HTTP client (no @notionhq/client SDK dependency)
+- Notion API version: `2025-09-03` (matches docs/skills curl examples)
+- Exponential backoff with jitter for 429/5xx retries (max 3)
+- Privacy-preserving WebOps logging (domains only, no field values)
+- Content hashing (SHA-256) for idempotent sync
+- Blocks-to-markdown conversion for content fetch
+- Non-fatal write errors (log locally and continue)
+
+**Services:**
+
+| Service | Purpose | Notion Database |
+|---------|---------|-----------------|
+| WebOps Logging | Audit trail for browser actions | WebOps Log |
+| Research Save | Cache research with deduplication | Research Radar |
+| Site Sync | Squarespace draft/publish tracking | Posts |
+
+**Configuration:**
+```json
+{
+  "dj": {
+    "notion": {
+      "webOpsDbId": "your-webops-database-id",
+      "researchDbId": "your-research-database-id",
+      "postsDbId": "your-posts-database-id"
+    }
+  }
+}
+```
+
+**Environment Variables:**
+
+| Variable | Description |
+|----------|-------------|
+| `NOTION_API_KEY` | Notion integration token (secret_xxx) |
+| `DJ_NOTION_WEBOPS_DB_ID` | WebOps Log database ID |
+| `DJ_NOTION_RESEARCH_DB_ID` | Research Radar database ID |
+| `DJ_NOTION_POSTS_DB_ID` | Posts database ID |
+
+**Usage:**
+```typescript
+import { createNotionClient, NotionService } from "openclaw/dj/notion";
+
+// Create client with retries
+const client = createNotionClient({ apiKey: process.env.NOTION_API_KEY });
+
+// Higher-level service
+const service = new NotionService(client, {
+  webOpsDbId: "...",
+  researchDbId: "...",
+  postsDbId: "...",
+});
+
+// Log WebOps action (privacy-preserving)
+await service.createWebOpsLogEntry({
+  workflowId: "wf-123",
+  task: "Fill contact form",
+  domainsVisited: ["example.com"],
+  actionsCount: 5,
+  // Note: No field values logged
+});
+
+// Save research with deduplication
+const result = await service.saveResearchEntry({
+  title: "AI Ethics Research",
+  query: "AI ethics regulations",
+  cacheKey: "abc123...",
+  summary: ["Finding 1", "Finding 2"],
+  citations: [{ title: "Source", url: "https://..." }],
+});
+```
+
+**Idempotent Sync (Site Service):**
+```typescript
+import { SiteService, computeContentHash } from "openclaw/dj";
+
+const site = new SiteService({ notionService: service });
+
+// Check if content changed before browser automation
+const { changed, newHash } = await site.checkContentChanged(pageId, content);
+if (!changed) {
+  console.log("Content unchanged, skipping browser update");
+  return;
+}
+
+// After successful browser update
+await site.recordSyncSuccess(pageId, newHash);
+```
+
+### DJ Documentation (`docs/dj/`)
+
+- `runbook.md` - Complete setup guide (Telegram, Notion, gog, LM Studio)
+- `budget.md` - Budget system documentation
+- `work-busy-ics.md` - Outlook ICS integration guide
+- `notion-schema.md` - Notion database schemas
+- `cron-jobs.md` - Scheduled tasks (daily brief, weekly review, ops digest)
+- `web-operator.md` - Web Operator policy and usage (M4)
+- `squarespace.md` - Squarespace integration guide (M4)
+- `research.md` - Research skill documentation (M4)
+
 ## Further Reading
 
 For detailed information, see [AGENTS.md](./AGENTS.md) which contains:
