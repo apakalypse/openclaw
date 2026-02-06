@@ -415,6 +415,169 @@ Check logs at: `\tmp\openclaw\openclaw-<date>.log`
 
 The DJ profile pack is a personal assistant configuration with Telegram integration, Notion task management, and Google Calendar support. Documentation lives in `docs/dj/`.
 
+### DJ Setup: Common Pitfalls and Solutions
+
+This section documents common issues encountered during initial DJ setup and their solutions.
+
+#### 1. Notion Integration: 404 Database Not Found
+
+**Symptom:**
+```json
+{
+  "object": "error",
+  "status": 404,
+  "code": "object_not_found",
+  "message": "Could not find database with ID: 2ff7c385-b5d2-803f-b9b8-f85a8f65e6e2. Make sure the relevant pages and databases are shared with your integration."
+}
+```
+
+**Root Cause:** Notion databases not shared with the integration
+
+**Solution:**
+1. Go to each Notion database (Tasks, Projects, Research Radar)
+2. Click "Share" → "Invite"
+3. Select your integration from the list
+4. Test with curl:
+   ```bash
+   curl -H "Authorization: Bearer $NOTION_API_KEY" \
+        -H "Notion-Version: 2022-06-28" \
+        "https://api.notion.com/v1/databases/{database_id}/query"
+   ```
+
+#### 2. Google Calendar (gog): Installation Without sudo
+
+**Symptom:**
+```
+/bin/bash: line 1: go: command not found
+```
+
+**Root Cause:** Go language not installed, and installing Go requires sudo
+
+**Solution:** Use pre-built gog binary instead of `go install`:
+```bash
+cd /tmp
+curl -L -o gog.tar.gz https://github.com/steipete/gogcli/releases/download/v0.9.0/gogcli_0.9.0_linux_amd64.tar.gz
+tar -xzf gog.tar.gz
+mkdir -p ~/.local/bin
+mv gog ~/.local/bin/gog
+chmod +x ~/.local/bin/gog
+gog version
+```
+
+#### 3. Google Calendar (gog): OAuth 403 Access Denied
+
+**Symptom:**
+```
+Error 403: access_denied
+```
+
+**Root Cause:** OAuth app in "Testing" mode, but user account can't be added as test user (e.g., workspace restrictions or ineligible accounts)
+
+**Solution:** Use manual authentication mode:
+```bash
+gog auth add --manual
+```
+
+This provides a browserless flow where you:
+1. Visit the authorization URL manually
+2. Approve in browser
+3. Copy the redirect URL (localhost with code parameter)
+4. Paste it back to the gog prompt
+
+**Important:** Each `gog auth add` generates a new state parameter. Don't reuse authorization codes from previous attempts - run the full flow each time.
+
+#### 4. Google Calendar (gog): State Mismatch
+
+**Symptom:**
+```
+state mismatch
+```
+
+**Root Cause:** Authorization code from a previous authentication attempt used with a new state parameter
+
+**Solution:** Run the authentication flow interactively in your terminal:
+1. Run `gog auth add --manual` directly in your shell
+2. Complete the OAuth flow immediately without switching terminals
+3. The state parameter must match between the auth request and callback
+
+**Note:** Each authentication attempt generates a fresh state token for security. Authorization codes from previous attempts cannot be reused.
+
+#### 5. Google Calendar (gog): Keyring Password Setup
+
+After successful authentication, gog stores credentials in an encrypted keyring. Set environment variables for automated access:
+
+```bash
+# Add to ~/.bashrc or equivalent
+export GOG_KEYRING_PASSWORD="your-password"
+export GOG_ACCOUNT="your-email@gmail.com"
+
+# Test access
+gog auth list
+```
+
+#### 6. Model Configuration: Version Naming Confusion
+
+**Symptom:** User says "opus 4.6" but expects specific version
+
+**Root Cause:** Model versions use date-based identifiers, not semantic versioning
+
+**Solution:** Use the date-based format:
+```json
+{
+  "model": {
+    "primary": "claude-cli/claude-opus-4-20260205"
+  }
+}
+```
+
+The format is: `claude-{model}-{major}-{YYYYMMDD}`
+- `claude-opus-4-20260205` = Claude Opus 4 released on Feb 5, 2026 (version "4.6")
+- `claude-sonnet-4-5-20250514` = Claude Sonnet 4.5 released on May 14, 2025
+
+**Note:** The public-facing version name (e.g., "4.6") is a marketing label. The API uses date-based identifiers for reproducibility.
+
+#### 7. USER.md Setup
+
+**No issues encountered.** The USER.md file creation worked smoothly using direct file write with heredoc.
+
+**Location:** `~/.openclaw/workspace/USER.md`
+
+**Content:** Full DJ profile JSON with portfolio structure, operating modes, and project details.
+
+#### Setup Checklist
+
+Use this checklist to verify complete DJ setup:
+
+- [ ] **Telegram Bot**: Bot token configured, user ID in allowlist
+- [ ] **Notion Integration**:
+  - [ ] Integration created at notion.so/my-integrations
+  - [ ] API key saved to `~/.openclaw/credentials/notion-api-key.txt`
+  - [ ] Tasks database shared with integration
+  - [ ] Projects database shared with integration
+  - [ ] Research database shared with integration
+  - [ ] Database IDs configured in `openclaw.json` under `dj.notion`
+- [ ] **Google Calendar (gog)**:
+  - [ ] OAuth client credentials downloaded
+  - [ ] Credentials saved to `~/.openclaw/credentials/google_client_secret.json`
+  - [ ] Authentication completed: `gog auth list` shows account
+  - [ ] Keyring password set in `~/.bashrc` (GOG_KEYRING_PASSWORD)
+  - [ ] Account email set in `~/.bashrc` (GOG_ACCOUNT)
+- [ ] **USER.md**: Profile created at `~/.openclaw/workspace/USER.md`
+- [ ] **Model Configuration**: Claude Opus 4.6 or preferred model configured
+- [ ] **Gateway Restart**: Restarted with all environment variables
+
+**Final Test:**
+```bash
+# Start gateway with all env vars
+source ~/.bashrc
+export ANTHROPIC_API_KEY="your-key"
+export OPENCLAW_GATEWAY_TOKEN="local-dev-token"
+node openclaw.mjs gateway run --port 18789 --verbose
+
+# Send test message via Telegram
+# Bot should respond with personalized greeting based on USER.md
+```
+
 ### Budget System (`src/budget/`)
 
 Resource governance for agent workflows with tiered limits:
