@@ -268,16 +268,32 @@ export async function runCliAgent(params: {
 
       const outputMode = useResume ? (backend.resumeOutput ?? backend.output) : backend.output;
 
+      const throwIfCliError = (output: { text: string; isError?: boolean }) => {
+        if (!output.isError) return;
+        const reason = classifyFailoverReason(output.text) ?? "unknown";
+        const status = resolveFailoverStatus(reason);
+        throw new FailoverError(output.text, {
+          reason,
+          provider: params.provider,
+          model: modelId,
+          status,
+        });
+      };
+
       if (outputMode === "text") {
         return { text: stdout, sessionId: undefined };
       }
       if (outputMode === "jsonl") {
         const parsed = parseCliJsonl(stdout, backend);
-        return parsed ?? { text: stdout };
+        const out = parsed ?? { text: stdout };
+        throwIfCliError(out);
+        return out;
       }
 
       const parsed = parseCliJson(stdout, backend);
-      return parsed ?? { text: stdout };
+      const out = parsed ?? { text: stdout };
+      throwIfCliError(out);
+      return out;
     });
 
     const text = output.text?.trim();

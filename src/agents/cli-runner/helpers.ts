@@ -175,6 +175,8 @@ export type CliOutput = {
   text: string;
   sessionId?: string;
   usage?: CliUsage;
+  /** True when the CLI reported an error result (e.g. `is_error: true` with exit code 0). */
+  isError?: boolean;
 };
 
 function buildModelAliasLines(cfg?: OpenClawConfig) {
@@ -349,12 +351,13 @@ export function parseCliJson(raw: string, backend: CliBackendConfig): CliOutput 
   }
   const sessionId = pickSessionId(parsed, backend);
   const usage = isRecord(parsed.usage) ? toUsage(parsed.usage) : undefined;
+  const isError = parsed.is_error === true;
   const text =
     collectText(parsed.message) ||
     collectText(parsed.content) ||
     collectText(parsed.result) ||
     collectText(parsed);
-  return { text: text.trim(), sessionId, usage };
+  return { text: text.trim(), sessionId, usage, isError: isError || undefined };
 }
 
 export function parseCliJsonl(raw: string, backend: CliBackendConfig): CliOutput | null {
