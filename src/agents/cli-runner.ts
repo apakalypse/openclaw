@@ -221,7 +221,10 @@ export async function runCliAgent(params: {
       }
 
       const effectiveTimeout = backend.timeoutMs ?? params.timeoutMs;
-      const result = await runCommandWithTimeout([backend.command, ...args], {
+      // Strip null bytes from args — Telegram media metadata can inject them
+      // and Node's spawn rejects arguments containing \0.
+      const sanitizedArgs = args.map((a) => a.replace(/\0/g, ""));
+      const result = await runCommandWithTimeout([backend.command, ...sanitizedArgs], {
         timeoutMs: effectiveTimeout,
         idleTimeoutMs: backend.idleTimeoutMs,
         cwd: workspaceDir,
