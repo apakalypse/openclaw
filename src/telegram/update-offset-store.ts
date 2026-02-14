@@ -4,11 +4,12 @@ import os from "node:os";
 import path from "node:path";
 import { resolveStateDir } from "../config/paths.js";
 
-const STORE_VERSION = 1;
+const STORE_VERSION = 2;
 
 type TelegramUpdateOffsetState = {
   version: number;
   lastUpdateId: number | null;
+  tokenHash?: string | null;
 };
 
 function normalizeAccountId(accountId?: string) {
@@ -31,10 +32,18 @@ function resolveTelegramUpdateOffsetPath(
 function safeParseState(raw: string): TelegramUpdateOffsetState | null {
   try {
     const parsed = JSON.parse(raw) as TelegramUpdateOffsetState;
-    if (parsed?.version !== STORE_VERSION) {
+    // Accept older versions (best-effort); monitor decides how to interpret.
+    if (parsed?.version !== 1 && parsed?.version !== STORE_VERSION) {
       return null;
     }
     if (parsed.lastUpdateId !== null && typeof parsed.lastUpdateId !== "number") {
+      return null;
+    }
+    if (
+      "tokenHash" in parsed &&
+      parsed.tokenHash !== null &&
+      typeof parsed.tokenHash !== "string"
+    ) {
       return null;
     }
     return parsed;
@@ -43,15 +52,18 @@ function safeParseState(raw: string): TelegramUpdateOffsetState | null {
   }
 }
 
-export async function readTelegramUpdateOffset(params: {
+export function hashTelegramToken(token: string): string {
+  return crypto.createHash("sha256").update(token.trim()).digest("hex");
+}
+
+export async function readTelegramUpdateOffsetState(params: {
   accountId?: string;
   env?: NodeJS.ProcessEnv;
-}): Promise<number | null> {
+}): Promise<TelegramUpdateOffsetState | null> {
   const filePath = resolveTelegramUpdateOffsetPath(params.accountId, params.env);
   try {
     const raw = await fs.readFile(filePath, "utf-8");
-    const parsed = safeParseState(raw);
-    return parsed?.lastUpdateId ?? null;
+    return safeParseState(raw);
   } catch (err) {
     const code = (err as { code?: string }).code;
     if (code === "ENOENT") {
@@ -61,9 +73,18 @@ export async function readTelegramUpdateOffset(params: {
   }
 }
 
+export async function readTelegramUpdateOffset(params: {
+  accountId?: string;
+  env?: NodeJS.ProcessEnv;
+}): Promise<number | null> {
+  const state = await readTelegramUpdateOffsetState(params);
+  return state?.lastUpdateId ?? null;
+}
+
 export async function writeTelegramUpdateOffset(params: {
   accountId?: string;
   updateId: number;
+  tokenHash?: string;
   env?: NodeJS.ProcessEnv;
 }): Promise<void> {
   const filePath = resolveTelegramUpdateOffsetPath(params.accountId, params.env);
@@ -73,6 +94,7 @@ export async function writeTelegramUpdateOffset(params: {
   const payload: TelegramUpdateOffsetState = {
     version: STORE_VERSION,
     lastUpdateId: params.updateId,
+    ...(params.tokenHash ? { tokenHash: params.tokenHash } : {}),
   };
   await fs.writeFile(tmp, `${JSON.stringify(payload, null, 2)}\n`, {
     encoding: "utf-8",

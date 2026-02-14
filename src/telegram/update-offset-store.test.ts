@@ -1,36 +1,35 @@
-import fs from "node:fs/promises";
+import fs from "node:fs";
 import os from "node:os";
 import path from "node:path";
 import { describe, expect, it } from "vitest";
-import { readTelegramUpdateOffset, writeTelegramUpdateOffset } from "./update-offset-store.js";
-
-async function withTempStateDir<T>(fn: (dir: string) => Promise<T>) {
-  const previous = process.env.OPENCLAW_STATE_DIR;
-  const dir = await fs.mkdtemp(path.join(os.tmpdir(), "openclaw-telegram-"));
-  process.env.OPENCLAW_STATE_DIR = dir;
-  try {
-    return await fn(dir);
-  } finally {
-    if (previous === undefined) {
-      delete process.env.OPENCLAW_STATE_DIR;
-    } else {
-      process.env.OPENCLAW_STATE_DIR = previous;
-    }
-    await fs.rm(dir, { recursive: true, force: true });
-  }
-}
+import {
+  hashTelegramToken,
+  readTelegramUpdateOffsetState,
+  writeTelegramUpdateOffset,
+} from "./update-offset-store.js";
 
 describe("telegram update offset store", () => {
-  it("persists and reloads the last update id", async () => {
-    await withTempStateDir(async () => {
-      expect(await readTelegramUpdateOffset({ accountId: "primary" })).toBeNull();
+  it("reads legacy v1 state and writes v2 with tokenHash", async () => {
+    const tmp = fs.mkdtempSync(path.join(os.tmpdir(), "openclaw-telegram-offset-"));
+    const env = { ...process.env, OPENCLAW_STATE_DIR: tmp };
+    const dir = path.join(tmp, "telegram");
+    fs.mkdirSync(dir, { recursive: true, mode: 0o700 });
+    const legacyPath = path.join(dir, "update-offset-default.json");
+    fs.writeFileSync(
+      legacyPath,
+      JSON.stringify({ version: 1, lastUpdateId: 123 }, null, 2) + "\n",
+      "utf8",
+    );
 
-      await writeTelegramUpdateOffset({
-        accountId: "primary",
-        updateId: 421,
-      });
+    const legacy = await readTelegramUpdateOffsetState({ env });
+    expect(legacy?.lastUpdateId).toBe(123);
+    expect(legacy?.tokenHash ?? null).toBe(null);
 
-      expect(await readTelegramUpdateOffset({ accountId: "primary" })).toBe(421);
-    });
+    const tokenHash = hashTelegramToken("123:abc");
+    await writeTelegramUpdateOffset({ env, updateId: 456, tokenHash });
+
+    const next = await readTelegramUpdateOffsetState({ env });
+    expect(next?.lastUpdateId).toBe(456);
+    expect(next?.tokenHash).toBe(tokenHash);
   });
 });

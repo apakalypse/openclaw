@@ -483,12 +483,18 @@ This will verify:
 
 ## Troubleshooting
 
+### After a Reboot
+
+See [post-reboot-recovery.md](./post-reboot-recovery.md) for the full recovery checklist and prevention plan (systemd service, doctor script, config requirements).
+
 ### Telegram Bot Not Responding
 
 1. Check gateway is running: `curl http://localhost:18789/health`
-2. Verify token: `cat ~/.openclaw/credentials/telegram.token`
+2. Verify token: `cat ~/.openclaw/credentials/telegram-bot-token.txt`
 3. Check logs: `tail -f /tmp/openclaw/openclaw-*.log`
 4. Ensure bot is not blocked by Telegram (message @BotFather `/mybots`)
+5. Check for `CLAUDECODE` env var leak: `echo $CLAUDECODE` (should be empty)
+6. Check for missing `gateway.auth.token`: `grep auth ~/.openclaw/openclaw.json`
 
 ### Notion API Errors
 

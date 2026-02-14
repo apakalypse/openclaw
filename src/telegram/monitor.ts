@@ -11,7 +11,11 @@ import { resolveTelegramAllowedUpdates } from "./allowed-updates.js";
 import { createTelegramBot } from "./bot.js";
 import { isRecoverableTelegramNetworkError } from "./network-errors.js";
 import { makeProxyFetch } from "./proxy.js";
-import { readTelegramUpdateOffset, writeTelegramUpdateOffset } from "./update-offset-store.js";
+import {
+  hashTelegramToken,
+  readTelegramUpdateOffsetState,
+  writeTelegramUpdateOffset,
+} from "./update-offset-store.js";
 import { startTelegramWebhook } from "./webhook.js";
 
 export type MonitorTelegramOpts = {
@@ -115,9 +119,73 @@ export async function monitorTelegramProvider(opts: MonitorTelegramOpts = {}) {
   const proxyFetch =
     opts.proxyFetch ?? (account.config.proxy ? makeProxyFetch(account.config.proxy) : undefined);
 
-  let lastUpdateId = await readTelegramUpdateOffset({
+  const tokenHash = hashTelegramToken(token);
+  const storedState = await readTelegramUpdateOffsetState({
     accountId: account.accountId,
   });
+  let lastUpdateId = storedState?.lastUpdateId ?? null;
+
+  const base = `https://api.telegram.org/bot${token}`;
+  const fetcher = proxyFetch ?? fetch;
+  const fetchWithTimeout = async (url: string, timeoutMs: number) => {
+    const controller = new AbortController();
+    const timer = setTimeout(() => controller.abort(), timeoutMs);
+    try {
+      return await fetcher(url, { signal: controller.signal });
+    } finally {
+      clearTimeout(timer);
+    }
+  };
+
+  // If the bot token changed since we last ran, a stale lastUpdateId can silently skip all updates.
+  // We catch up by sampling pending updates, setting the offset to the latest id, and letting the
+  // runner advance normally from there (dropping backlog without deadlocking).
+  if (storedState?.tokenHash && storedState.tokenHash !== tokenHash) {
+    (opts.runtime?.error ?? console.error)(
+      `telegram: token changed for account "${account.accountId}" (offset store mismatch); catching up to avoid skipping all updates.`,
+    );
+    try {
+      const res = await fetchWithTimeout(`${base}/getUpdates?limit=100&timeout=0`, 5000);
+      const json = (await res.json()) as {
+        ok?: boolean;
+        description?: string;
+        result?: Array<{ update_id?: number }>;
+      };
+      if (res.ok && json?.ok) {
+        const ids = (json.result ?? [])
+          .map((u) => u.update_id)
+          .filter((v): v is number => typeof v === "number" && Number.isFinite(v));
+        const maxId = ids.length ? Math.max(...ids) : null;
+        if (typeof maxId === "number") {
+          lastUpdateId = maxId;
+        } else {
+          lastUpdateId = null;
+        }
+      } else {
+        (opts.runtime?.error ?? console.error)(
+          `telegram: catch-up getUpdates failed (${res.status}): ${json?.description ?? "unknown error"}`,
+        );
+        lastUpdateId = null;
+      }
+    } catch (err) {
+      (opts.runtime?.error ?? console.error)(
+        `telegram: catch-up getUpdates failed: ${String(err)}`,
+      );
+      lastUpdateId = null;
+    }
+  } else if (storedState?.tokenHash == null && storedState?.lastUpdateId != null) {
+    // Backfill tokenHash to make future token swaps detectable (no behavior change).
+    try {
+      await writeTelegramUpdateOffset({
+        accountId: account.accountId,
+        updateId: storedState.lastUpdateId,
+        tokenHash,
+      });
+    } catch {
+      // best-effort
+    }
+  }
+
   const persistUpdateId = async (updateId: number) => {
     if (lastUpdateId !== null && updateId <= lastUpdateId) {
       return;
@@ -127,6 +195,7 @@ export async function monitorTelegramProvider(opts: MonitorTelegramOpts = {}) {
       await writeTelegramUpdateOffset({
         accountId: account.accountId,
         updateId,
+        tokenHash,
       });
     } catch (err) {
       (opts.runtime?.error ?? console.error)(

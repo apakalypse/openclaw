@@ -397,13 +397,25 @@ export const telegramPlugin: ChannelPlugin<ResolvedTelegramAccount> = {
           2500,
           account.config.proxy,
         );
-        const username = probe.ok ? probe.bot?.username?.trim() : null;
-        if (username) {
-          telegramBotLabel = ` (@${username})`;
+        if (probe.ok) {
+          const username = probe.bot?.username?.trim();
+          if (username) {
+            telegramBotLabel = ` (@${username})`;
+          }
+        } else {
+          const status = probe.status ?? "n/a";
+          const reason = probe.error?.trim() || "unknown error";
+          ctx.log?.warn(
+            `[${account.accountId}] Telegram probe failed (status=${status}): ${reason}. Provider will continue and retry; verify token and network/DNS/proxy settings.`,
+          );
         }
       } catch (err) {
+        const reason = String(err);
+        ctx.log?.warn(
+          `[${account.accountId}] Telegram probe threw: ${reason}. Provider will continue and retry; verify token and network/DNS/proxy settings.`,
+        );
         if (getTelegramRuntime().logging.shouldLogVerbose()) {
-          ctx.log?.debug?.(`[${account.accountId}] bot probe failed: ${String(err)}`);
+          ctx.log?.debug?.(`[${account.accountId}] bot probe failed: ${reason}`);
         }
       }
       ctx.log?.info(`[${account.accountId}] starting provider${telegramBotLabel}`);

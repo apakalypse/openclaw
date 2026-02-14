@@ -19,6 +19,29 @@ type InlineProviderConfig = {
   models?: ModelDefinitionConfig[];
 };
 
+function isOpenAiLikeModelId(modelId: string): boolean {
+  const lower = modelId.trim().toLowerCase();
+  // Intentionally conservative: avoid silently accepting typos for non-OpenAI model IDs.
+  return lower.startsWith("gpt-") || lower.startsWith("text-embedding-");
+}
+
+function guessOpenAiModelDefaults(modelId: string): {
+  reasoning: boolean;
+  contextWindow: number;
+  maxTokens: number;
+} {
+  const lower = modelId.trim().toLowerCase();
+  // Heuristic defaults; exact values come from pi-ai's catalog when present.
+  if (lower.startsWith("gpt-5.")) {
+    return { reasoning: true, contextWindow: 400_000, maxTokens: 128_000 };
+  }
+  return {
+    reasoning: lower.startsWith("gpt-"),
+    contextWindow: DEFAULT_CONTEXT_TOKENS,
+    maxTokens: 8192,
+  };
+}
+
 export function buildInlineProviderModels(
   providers: Record<string, InlineProviderConfig>,
 ): InlineModelEntry[] {
@@ -98,6 +121,30 @@ export function resolveModel(
         cost: { input: 0, output: 0, cacheRead: 0, cacheWrite: 0 },
         contextWindow: providerCfg?.models?.[0]?.contextWindow ?? DEFAULT_CONTEXT_TOKENS,
         maxTokens: providerCfg?.models?.[0]?.maxTokens ?? DEFAULT_CONTEXT_TOKENS,
+      } as Model<Api>);
+      return { model: fallbackModel, authStorage, modelRegistry };
+    }
+
+    // Allow brand-new OpenAI model IDs without requiring a pi-ai catalog update.
+    // This keeps OpenClaw usable when OpenAI adds new GPT-5.x/Codex variants.
+    if (
+      (normalizedProvider === "openai" || normalizedProvider === "openai-codex") &&
+      isOpenAiLikeModelId(modelId)
+    ) {
+      const { reasoning, contextWindow, maxTokens } = guessOpenAiModelDefaults(modelId);
+      const api = (
+        normalizedProvider === "openai-codex" ? "openai-codex-responses" : "openai-responses"
+      ) as Model<Api>["api"];
+      const fallbackModel: Model<Api> = normalizeModelCompat({
+        id: modelId,
+        name: modelId,
+        api,
+        provider: normalizedProvider,
+        reasoning,
+        input: ["text"],
+        cost: { input: 0, output: 0, cacheRead: 0, cacheWrite: 0 },
+        contextWindow,
+        maxTokens,
       } as Model<Api>);
       return { model: fallbackModel, authStorage, modelRegistry };
     }

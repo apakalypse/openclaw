@@ -244,6 +244,10 @@ openclaw config set <key> <value>
 
 See [docs/cli-backend.md](docs/cli-backend.md) for Claude Code CLI backend setup, model naming conventions, session mode, and debugging.
 
+## Post-Reboot Recovery
+
+If the gateway or Telegram stops working after a machine restart, see [docs/dj/post-reboot-recovery.md](docs/dj/post-reboot-recovery.md). Common post-reboot issues: missing `gateway.auth.token`, `CLAUDECODE` env var leak into child processes, Claude Code CLI concurrency lock, and WSL2 cold-boot I/O slowness. The doc includes a copy-paste checklist, a systemd service for auto-start, and a doctor script.
+
 ## DJ Profile Pack
 
 See [docs/dj/claude-context.md](docs/dj/claude-context.md) for DJ-specific setup, skills, budget system, web operator, Notion integration, and troubleshooting.
@@ -255,3 +259,4 @@ See [docs/dj/claude-context.md](docs/dj/claude-context.md) for DJ-specific setup
 - [docs/cli-backend.md](docs/cli-backend.md) - CLI backend configuration reference
 - [docs/dj/claude-context.md](docs/dj/claude-context.md) - DJ profile pack context
 - [docs/dj/runbook.md](docs/dj/runbook.md) - Complete DJ setup guide
+- [docs/dj/post-reboot-recovery.md](docs/dj/post-reboot-recovery.md) - Post-reboot recovery checklist and prevention plan

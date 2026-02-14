@@ -127,4 +127,27 @@ describe("resolveModel", () => {
     expect(result.model?.provider).toBe("custom");
     expect(result.model?.id).toBe("missing-model");
   });
+
+  it("falls back for new OpenAI model ids without explicit provider config", () => {
+    const result = resolveModel("openai", "gpt-5.3", "/tmp/agent", {} as OpenClawConfig);
+
+    expect(result.error).toBeUndefined();
+    expect(result.model?.provider).toBe("openai");
+    expect(result.model?.id).toBe("gpt-5.3");
+    expect(result.model?.api).toBe("openai-responses");
+  });
+
+  it("falls back for new OpenAI Codex model ids without explicit provider config", () => {
+    const result = resolveModel(
+      "openai-codex",
+      "gpt-5.3-codex-spark",
+      "/tmp/agent",
+      {} as OpenClawConfig,
+    );
+
+    expect(result.error).toBeUndefined();
+    expect(result.model?.provider).toBe("openai-codex");
+    expect(result.model?.id).toBe("gpt-5.3-codex-spark");
+    expect(result.model?.api).toBe("openai-codex-responses");
+  });
 });
